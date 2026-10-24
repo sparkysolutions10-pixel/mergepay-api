@@ -60,19 +60,17 @@ describe("Group Expense Settlement XDR Lifecycle Integration (#900)", () => {
   beforeAll(async () => {
     app = await buildApp();
 
-    owner = await seedUser({ displayName: "XDR Test Owner" });
-    debtor = await seedUser({ displayName: "XDR Test Debtor" });
-    creditor = await seedUser({ displayName: "XDR Test Creditor" });
+    owner = await seedUser("xdr-owner");
+    debtor = await seedUser("xdr-debtor");
+    creditor = await seedUser("xdr-creditor");
     userIdsToClean.push(owner.id, debtor.id, creditor.id);
 
-    const group = await createGroupWithMembers({
-      creator: owner,
-      name: "XDR Lifecycle Test Group",
-      members: [
-        { user: debtor, role: "member" },
-        { user: creditor, role: "member" },
-      ],
-    });
+    const group = await createGroupWithMembers(
+      app,
+      owner,
+      [debtor, creditor],
+      "XDR Lifecycle Test Group"
+    );
     groupId = group.id;
     groupIdsToClean.push(groupId);
   });
@@ -90,7 +88,7 @@ describe("Group Expense Settlement XDR Lifecycle Integration (#900)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/groups/${groupId}/expenses`,
-      headers: authHeaders(creditor.token),
+      headers: authHeaders(creditor),
       payload: {
         title: "Team Lunch in USDC",
         amount: "90.0000000",
@@ -123,7 +121,7 @@ describe("Group Expense Settlement XDR Lifecycle Integration (#900)", () => {
     const res = await app.inject({
       method: "GET",
       url: `/groups/${groupId}/balances`,
-      headers: authHeaders(debtor.token),
+      headers: authHeaders(debtor),
     });
 
     expect(res.statusCode).toBe(200);
@@ -145,7 +143,7 @@ describe("Group Expense Settlement XDR Lifecycle Integration (#900)", () => {
     const res = await app.inject({
       method: "POST",
       url: `/groups/${groupId}/settlements`,
-      headers: authHeaders(debtor.token),
+      headers: authHeaders(debtor),
       payload: {
         toUserId: creditor.id,
         amount: "30.0000000",
@@ -161,13 +159,13 @@ describe("Group Expense Settlement XDR Lifecycle Integration (#900)", () => {
 
     // Inspect the generated unsigned XDR
     const tx = new Transaction(body.xdr, config.networkPassphrase);
-    expect(tx.source).toBe(debtor.publicKey);
+    expect(tx.source).toBe(debtor.stellarPublicKey);
     expect(tx.operations).toHaveLength(1);
 
     const op = tx.operations[0];
     expect(op.type).toBe("payment");
     if (op.type === "payment") {
-      expect(op.destination).toBe(creditor.publicKey);
+      expect(op.destination).toBe(creditor.stellarPublicKey);
       expect(op.amount).toBe("30");
       expect(op.asset.code).toBe("USDC");
     }
@@ -181,7 +179,6 @@ describe("Group Expense Settlement XDR Lifecycle Integration (#900)", () => {
 
     expect(auditLogs.length).toBeGreaterThan(0);
     const actions = auditLogs.map((l) => l.action);
-    // At least one expense creation or settlement audit record must exist
     expect(
       actions.some((a) => a.includes("expense") || a.includes("settlement") || a.includes("group"))
     ).toBe(true);
